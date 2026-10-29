@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Nasdara Bunker Morse Decoder</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0d1117">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #e6edf3; min-height: 100vh; }
+.header { background: #161b22; padding: 12px 16px; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; }
+.header h1 { font-size: 1.1rem; font-weight: 600; }
+.tabs { display: flex; background: #161b22; border-bottom: 1px solid #30363d; }
+.tab { flex: 1; padding: 12px; text-align: center; background: none; border: none; color: #8b949e; font-size: 0.95rem; cursor: pointer; }
+.tab.active { color: #58a6ff; border-bottom: 2px solid #58a6ff; }
+.panel { display: none; padding: 16px; height: calc(100vh - 110px); overflow: auto; }
+.panel.active { display: block; }
+#mapPanel { padding: 0; }
+#map { height: 100%; width: 100%; border-radius: 0; }
+.controls { background: #161b22; padding: 16px; border-radius: 12px; margin-bottom: 16px; }
+button { background: #238636; color: white; border: none; padding: 12px 20px; border-radius: 8px; font-size: 1rem; cursor: pointer; width: 100%; margin: 4px 0; }
+button:disabled { background: #30363d; color: #8b949e; }
+button.secondary { background: #21262d; border: 1px solid #30363d; }
+.status { margin: 12px 0; padding: 10px; background: #0d1117; border-radius: 8px; font-family: monospace; font-size: 0.9rem; min-height: 60px; }
+.decoded { background: #161b22; border-radius: 12px; padding: 12px; margin-top: 12px; }
+.bunker-item { background: #0d1117; padding: 12px; border-radius: 8px; margin: 8px 0; border-left: 3px solid #58a6ff; }
+.bunker-item strong { color: #58a6ff; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; }
+.dot.listening { background: #f85149; animation: pulse 1s infinite; }
+.dot.idle { background: #8b949e; }
+@keyframes pulse { 50% { opacity: 0.5; } }
+.morse-input { width: 100%; background: #0d1117; border: 1px solid #30363d; color: #e6edf3; padding: 10px; border-radius: 8px; font-family: monospace; margin: 8px 0; }
+.legend { font-size: 0.8rem; color: #8b949e; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Nasdara Bunker Decoder</h1>
+  <span id="micStatus"><span class="dot idle" id="micDot"></span> Mic</span>
+</div>
+<div class="tabs">
+  <button class="tab active" data-tab="decoder">Decoder</button>
+  <button class="tab" data-tab="map">Map</button>
+  <button class="tab" data-tab="list">Bunkers</button>
+  <button class="tab" data-tab="locations">Locations</button>
+</div>
+
+<div id="decoder" class="panel active">
+  <div class="controls">
+    <button id="startMic">Start Listening</button>
+    <button id="stopMic" class="secondary" disabled>Stop</button>
+    <div class="status" id="liveStatus">Ready. Tap Start Listening and hold your phone near the radio (80.0 MHz at night).</div>
+    <p class="legend">Tip: Short beep = dot (·), long beep = dash (−). Works best in a quiet room or with headphones on the radio.</p>
+  </div>
+  <div class="controls">
+    <h4 style="margin-bottom:8px">Detection Settings (adjust live)</h4>
+    <label>Volume threshold: <span id="volVal">15</span></label>
+    <input type="range" id="volThreshold" min="5" max="80" value="15" style="width:100%">
+    <label>Dot/Dash cutoff (ms): <span id="cutoffVal">250</span></label>
+    <input type="range" id="dotDashCutoff" min="100" max="600" value="250" style="width:100%">
+    <label>Silence gap to end beep (ms): <span id="silenceVal">300</span></label>
+    <input type="range" id="silenceGap" min="100" max="800" value="300" style="width:100%">
+    <p class="legend">Lower volume threshold if nothing is detected. Raise the cutoff if everything is dashes.</p>
+  </div>
+  <div class="controls">
+    <label>Or paste / type Morse manually (dots and dashes):</label>
+    <textarea class="morse-input" id="manualMorse" rows="3" placeholder="Example: ----- --... ..--- .---- ----- --... ....- ...-- ...-- ..---"></textarea>
+    <button id="decodeManual">Decode Manual Input</button>
+  </div>
+  <div class="decoded" id="decodedList">
+    <p style="color:#8b949e">Decoded bunkers will appear here.</p>
+  </div>
+</div>
+
+<div id="mapPanel" class="panel">
+  <div id="map"></div>
+  <div id="layerControls" style="position:absolute;top:10px;right:10px;background:#161b22;padding:10px;border-radius:8px;z-index:1000;font-size:0.85rem;">
+    <label><input type="checkbox" id="toggleBunkers" checked> Bunkers</label><br>
+    <label><input type="checkbox" id="toggleLoot" checked> Loot / POIs</label><br>
+    <label><input type="checkbox" id="toggleRoads" checked> Roads</label>
+  </div>
+</div>
+
+<div id="locations" class="panel">
+  <div class="controls">
+    <h4 style="margin-bottom:8px">My Location</h4>
+    <input type="text" id="myLocInput" class="morse-input" placeholder="6-digit grid (e.g. 072107)" maxlength="6">
+    <button id="setMyLoc">Set My Location</button>
+    <div id="myLocStatus" style="margin-top:8px;color:#8b949e;font-size:0.9rem"></div>
+  </div>
+  <div class="controls">
+    <h4 style="margin-bottom:8px">Add Location</h4>
+    <input type="text" id="locTitle" class="morse-input" placeholder="Title (e.g. Base, Loot, Friend)">
+    <input type="text" id="locGrid" class="morse-input" placeholder="6-digit grid (e.g. 101121)" maxlength="6">
+    <button id="addLoc">Add to List</button>
+  </div>
+  <div id="headingDisplay" style="background:#161b22;border-radius:8px;padding:12px;margin-bottom:12px;text-align:center;font-size:1.1rem">
+    Heading: <span id="headingValue">Select a pin</span>
+  </div>
+  <div id="customLocations"></div>
+</div>
+
+<div id="list" class="panel">
+  <h3 style="margin-bottom:12px">All 23 Nasdara Bunkers</h3>
+  <p style="color:#8b949e;margin-bottom:12px;font-size:0.9rem">Only 3 are active each night. Codes change nightly and come from the radio.</p>
+  <div id="allBunkers"></div>
+  <h3 style="margin:24px 0 12px">Number → Morse Cross-Reference</h3>
+  <div id="morseTable" style="background:#161b22;border-radius:8px;padding:12px;font-family:monospace;font-size:0.9rem;"></div>
+</div>
+
+<script>
+const BUNKERS = [
+  {id:1, code:"072107", gps:"0.72 / 1.07", x:7216, y:5706},
+  {id:2, code:"092044", gps:"0.92 / 0.44", x:9167, y:11945},
+  {id:3, code:"112067", gps:"1.12 / 0.67", x:11203, y:9662},
+  {id:4, code:"068059", gps:"0.68 / 0.59", x:6797, y:10515},
+  {id:5, code:"107124", gps:"1.07 / 1.24", x:10742, y:4027},
+  {id:6, code:"076076", gps:"0.76 / 0.76", x:7630, y:8752},
+  {id:7, code:"115054", gps:"1.15 / 0.54", x:11494, y:11022},
+  {id:8, code:"104083", gps:"1.04 / 0.83", x:10419, y:8056},
+  {id:9, code:"046055", gps:"0.46 / 0.55", x:4584, y:10884},
+  {id:10, code:"101121", gps:"1.01 / 1.21", x:10087, y:4239},
+  {id:11, code:"110086", gps:"1.10 / 0.86", x:10959, y:7783},
+  {id:12, code:"074090", gps:"0.74 / 0.90", x:7381, y:7383},
+  {id:13, code:"106102", gps:"1.06 / 1.02", x:10555, y:6135},
+  {id:14, code:"088113", gps:"0.88 / 1.13", x:8830, y:5132},
+  {id:15, code:"085116", gps:"0.85 / 1.16", x:8541, y:4795},
+  {id:16, code:"087088", gps:"0.87 / 0.88", x:8741, y:7560},
+  {id:17, code:"133021", gps:"1.33 / 0.21", x:13323, y:14238},
+  {id:18, code:"039066", gps:"0.39 / 0.66", x:3861, y:9775},
+  {id:19, code:"066090", gps:"0.66 / 0.90", x:6559, y:7361},
+  {id:20, code:"096109", gps:"0.96 / 1.09", x:9633, y:5440},
+  {id:21, code:"029100", gps:"0.29 / 1.00", x:2863, y:6381},
+  {id:22, code:"057074", gps:"0.57 / 0.74", x:5719, y:8969},
+  {id:23, code:"067124", gps:"0.67 / 1.24", x:6713, y:3980}
+];
+
+const MORSE = {
+  "-----": "0", ".----": "1", "..---": "2", "...--": "3", "....-": "4",
+  ".....": "5", "-....": "6", "--...": "7", "---..": "8", "----.": "9"
+};
+const DIGIT_TO_MORSE = {
+  "0": "-----", "1": ".----", "2": "..---", "3": "...--", "4": "....-",
+  "5": ".....", "6": "-....", "7": "--...", "8": "---..", "9": "----."
+};
+
+// Starter loot / POI locations (major sites)
+const LOOT_POIS = [
+  {name:"FOB Atlas", type:"military", x:8300, y:10600},
+  {name:"COP Neptune", type:"military", x:12800, y:9700},
+  {name:"Dashtabad Airbase", type:"military", x:11900, y:5700},
+  {name:"Zulfiqar Missile Base", type:"military", x:2700, y:9700},
+  {name:"Shah Yailaq", type:"town", x:10300, y:8100},
+  {name:"Nasdara", type:"town", x:9600, y:12300},
+  {name:"Bustanshahr", type:"town", x:7300, y:10700},
+  {name:"Well (example)", type:"water", x:7000, y:8000}
+];
+
+// Simple road polylines (approximate major routes)
+const ROADS = [
+  {name:"Main South Road", points:[[3000,14000],[7000,12000],[10000,10000],[13000,9000]]},
+  {name:"North Valley", points:[[4000,5000],[7000,6000],[10000,5500],[12000,6000]]}
+];
+
+let map, markers = [];
+let lootLayer, roadLayer, bunkerLayer;
+let audioContext, analyser, microphone, isListening = false;
+let detectedSequence = "";
+let lastBeepTime = 0;
+let lastSilenceStart = 0;
+let silenceTimer = null;
+
+// Live settings — tuned to measured DayZ timings
+// Short ~230 ms, Long ~710 ms, intra-space ~250 ms
+let volThreshold = 15;
+let dotDashCutoff = 450;
+let silenceGap = 200;
+
+document.getElementById('volThreshold').addEventListener('input', (e) => {
+  volThreshold = +e.target.value;
+  document.getElementById('volVal').textContent = volThreshold;
+});
+document.getElementById('dotDashCutoff').addEventListener('input', (e) => {
+  dotDashCutoff = +e.target.value;
+  document.getElementById('cutoffVal').textContent = dotDashCutoff;
+});
+document.getElementById('silenceGap').addEventListener('input', (e) => {
+  silenceGap = +e.target.value;
+  document.getElementById('silenceVal').textContent = silenceGap;
+});
+
+// Tabs
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    const panelId = tab.dataset.tab === 'map' ? 'mapPanel' : tab.dataset.tab;
+    document.getElementById(panelId).classList.add('active');
+    if (tab.dataset.tab === 'map' && map) {
+      setTimeout(() => {
+        map.invalidateSize();
+        map.fitBounds([[0,0], [16380, 16380]], { padding: [10, 10] });
+      }, 150);
+    }
+  });
+});
+
+// Map init
+function initMap() {
+  map = L.map('map', {
+    crs: L.CRS.Simple,
+    minZoom: -5,
+    maxZoom: 3,
+    zoomSnap: 0.25,
+    zoomDelta: 0.5
+  });
+  const bounds = [[0,0], [16380, 16380]];
+  L.imageOverlay('https://drive.google.com/uc?export=view&id=1ClTaFj4e6S8H7mWkw82MNHNUGDCWM9zq', bounds).addTo(map);
+  map.fitBounds(bounds, { padding: [10, 10] });
+  map.setMaxBounds(bounds);
+
+  bunkerLayer = L.layerGroup().addTo(map);
+  lootLayer = L.layerGroup().addTo(map);
+  roadLayer = L.layerGroup().addTo(map);
+
+  // Bunkers (blue by default)
+  BUNKERS.forEach(b => {
+    const marker = L.marker([b.y, b.x], {
+      icon: L.divIcon({
+        className: 'custom-marker',
+        html: `<div style="background:#58a6ff;color:white;padding:3px 5px;border-radius:4px;font-size:10px;font-weight:bold;white-space:nowrap">${b.code}</div>`,
+        iconSize: [55, 18],
+        iconAnchor: [27, 9]
+      })
+    });
+    marker.bindPopup(`<b>Bunker #${b.id}</b><br>Grid: ${b.code}`);
+    marker.on('click', () => {
+      if (!myLocation) {
+        document.getElementById('headingValue').textContent = 'Set My Location first';
+        return;
+      }
+      const heading = calcHeading(myLocation, { x: b.x, y: b.y });
+      document.getElementById('headingValue').textContent = heading + '°';
+    });
+    bunkerLayer.addLayer(marker);
+    markers.push({bunkerId: b.id, marker});
+  });
+
+  // Loot / POI dots
+  LOOT_POIS.forEach(p => {
+    const color = p.type === 'military' ? '#f85149' : p.type === 'water' ? '#58a6ff' : '#d29922';
+    const marker = L.circleMarker([p.y, p.x], {
+      radius: 6,
+      color: color,
+      fillColor: color,
+      fillOpacity: 0.8
+    }).bindPopup(`<b>${p.name}</b><br>${p.type}`);
+    marker.on('click', () => {
+      if (!myLocation) return;
+      const heading = calcHeading(myLocation, { x: p.x, y: p.y });
+      document.getElementById('headingValue').textContent = heading + '°';
+    });
+    lootLayer.addLayer(marker);
+  });
+
+  // Roads
+  ROADS.forEach(r => {
+    const latlngs = r.points.map(pt => [pt[1], pt[0]]);
+    L.polyline(latlngs, {color: '#8b949e', weight: 2, opacity: 0.7}).bindPopup(r.name).addTo(roadLayer);
+  });
+
+  // Layer toggles
+  document.getElementById('toggleBunkers').addEventListener('change', e => {
+    e.target.checked ? map.addLayer(bunkerLayer) : map.removeLayer(bunkerLayer);
+  });
+  document.getElementById('toggleLoot').addEventListener('change', e => {
+    e.target.checked ? map.addLayer(lootLayer) : map.removeLayer(lootLayer);
+  });
+  document.getElementById('toggleRoads').addEventListener('change', e => {
+    e.target.checked ? map.addLayer(roadLayer) : map.removeLayer(roadLayer);
+  });
+}
+
+// Render all bunkers list + Morse table
+function renderAllBunkers() {
+  const el = document.getElementById('allBunkers');
+  el.innerHTML = BUNKERS.map(b => {
+    const morse = b.code.split('').map(d => DIGIT_TO_MORSE[d]).join(' ');
+    return `
+      <div class="bunker-item">
+        <strong>Bunker #${b.id}</strong> · Grid ${b.code}<br>
+        <small>GPS: ${b.gps} · Coords: ${b.x}, ${b.y}</small><br>
+        <small style="color:#8b949e">${morse}</small>
+      </div>
+    `;
+  }).join('');
+
+  // Cross-ref table
+  const table = document.getElementById('morseTable');
+  table.innerHTML = Object.keys(DIGIT_TO_MORSE).sort().map(d =>
+    `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #30363d"><span>${d}</span><span>${DIGIT_TO_MORSE[d]}</span></div>`
+  ).join('');
+}
+
+// Decode Morse string into digits
+// Handles spaces between characters so consecutive symbols don't merge
+function decodeMorse(morse) {
+  const digits = [];
+  // Split on any whitespace so each group is treated separately
+  const parts = morse.trim().split(/\s+/);
+  for (const part of parts) {
+    const cleaned = part.replace(/[^.-]/g, '');
+    if (cleaned.length === 5 && MORSE[cleaned]) {
+      digits.push(MORSE[cleaned]);
+    } else if (cleaned.length > 5) {
+      // Fallback: if someone pastes continuous symbols, chunk by 5
+      for (let i = 0; i < cleaned.length; i += 5) {
+        const chunk = cleaned.slice(i, i + 5);
+        if (chunk.length === 5 && MORSE[chunk]) digits.push(MORSE[chunk]);
+      }
+    }
+  }
+  return digits.join('');
+}
+
+// Process a full 10-digit string (6 location + 4 code)
+function processDigits(digits) {
+  if (digits.length < 6) return null;
+  const grid = digits.slice(0, 6);
+  const pin = digits.slice(6, 10) || '????';
+  const bunker = BUNKERS.find(b => b.code === grid);
+  return {grid, pin, bunker, full: digits};
+}
+
+// Update decoded list
+function addDecoded(result) {
+  const list = document.getElementById('decodedList');
+  if (list.querySelector('p')) list.innerHTML = '';
+  const item = document.createElement('div');
+  item.className = 'bunker-item';
+  if (result.bunker) {
+    item.innerHTML = `
+      <strong>Bunker #${result.bunker.id}</strong> · Door Code: <span style="color:#3fb950;font-size:1.2rem">${result.pin}</span><br>
+      <small>Location: ${result.grid} · GPS: ${result.bunker.gps}</small>
+    `;
+    addMarker(result.bunker, result.pin);
+  } else {
+    item.innerHTML = `<strong>Unknown grid</strong> ${result.grid}<br><small>PIN: ${result.pin}</small>`;
+  }
+  list.prepend(item);
+}
+
+function addMarker(bunker, pin) {
+  if (!map) return;
+  const existing = markers.find(m => m.bunkerId === bunker.id);
+  if (existing) bunkerLayer.removeLayer(existing.marker);
+
+  const marker = L.marker([bunker.y, bunker.x], {
+    icon: L.divIcon({
+      className: 'custom-marker',
+      html: `<div style="background:#f85149;color:white;padding:4px 6px;border-radius:4px;font-size:11px;font-weight:bold;white-space:nowrap;text-align:center;line-height:1.2">${bunker.code}<br>${pin}</div>`,
+      iconSize: [70, 32],
+      iconAnchor: [35, 16]
+    })
+  });
+  marker.bindPopup(`<b>Bunker #${bunker.id}</b><br>Door Code: <b>${pin}</b><br>Grid: ${bunker.code}`);
+  bunkerLayer.addLayer(marker);
+  markers = markers.filter(m => m.bunkerId !== bunker.id);
+  markers.push({bunkerId: bunker.id, marker});
+  map.setView([bunker.y, bunker.x], 1);
+}
+
+// Manual decode
+document.getElementById('decodeManual').addEventListener('click', () => {
+  const text = document.getElementById('manualMorse').value;
+  const digits = decodeMorse(text);
+  if (digits.length >= 6) {
+    const result = processDigits(digits);
+    if (result) addDecoded(result);
+    document.getElementById('liveStatus').textContent = `Decoded: ${digits}`;
+  } else {
+    document.getElementById('liveStatus').textContent = 'Not enough valid digits. Separate each character with a space (e.g. ----- --... ..---).';
+  }
+});
+
+// Microphone handling (basic amplitude-based detection)
+async function startMic() {
+  try {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    microphone = audioContext.createMediaStreamSource(stream);
+    analyser = audioContext.createAnalyser();
+    analyser.fftSize = 2048;
+    microphone.connect(analyser);
+    isListening = true;
+    detectedSequence = "";
+    lastBeepTime = 0;
+    lastSilenceStart = 0;
+    document.getElementById('startMic').disabled = true;
+    document.getElementById('stopMic').disabled = false;
+    document.getElementById('micDot').className = 'dot listening';
+    document.getElementById('liveStatus').textContent = 'Listening... Detecting beeps.';
+    detectBeeps();
+  } catch (err) {
+    document.getElementById('liveStatus').textContent = 'Microphone access denied. Use manual input instead.';
+  }
+}
+
+function stopMic() {
+  isListening = false;
+  if (audioContext) audioContext.close();
+  document.getElementById('startMic').disabled = false;
+  document.getElementById('stopMic').disabled = true;
+  document.getElementById('micDot').className = 'dot idle';
+  document.getElementById('liveStatus').textContent = 'Stopped.';
+}
+
+document.getElementById('startMic').addEventListener('click', startMic);
+document.getElementById('stopMic').addEventListener('click', stopMic);
+
+function detectBeeps() {
+  if (!isListening) return;
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  analyser.getByteTimeDomainData(data);
+  let sum = 0;
+  for (let i = 0; i < data.length; i++) sum += Math.abs(data[i] - 128);
+  const volume = sum / data.length;
+
+  const now = Date.now();
+  const isLoud = volume > volThreshold;
+
+  if (isLoud) {
+    if (lastBeepTime === 0) {
+      // Beep just started
+      lastBeepTime = now;
+    }
+  } else {
+    // Silence
+    if (lastBeepTime > 0) {
+      const silenceDuration = now - lastBeepTime;
+      if (silenceDuration > silenceGap) {
+        // Beep ended — measure full duration
+        const duration = silenceDuration;
+        const symbol = duration < dotDashCutoff ? '.' : '-';
+        detectedSequence += symbol;
+        lastBeepTime = 0;
+        lastSilenceStart = now;
+        document.getElementById('liveStatus').textContent =
+          `Detected: ${detectedSequence.slice(-40)}  |  last beep: ${duration} ms`;
+        // Auto-process when we have at least 10 digits (6 loc + 4 code)
+        if (detectedSequence.replace(/\s/g, '').length >= 50) {
+          const digits = decodeMorse(detectedSequence);
+          const result = processDigits(digits);
+          if (result) addDecoded(result);
+          detectedSequence = '';
+        }
+      }
+    } else if (lastSilenceStart > 0 && (now - lastSilenceStart) > 500) {
+      // Longer gap between groups — insert a space
+      if (!detectedSequence.endsWith(' ') && detectedSequence.length > 0) {
+        detectedSequence += ' ';
+        document.getElementById('liveStatus').textContent =
+          `Detected: ${detectedSequence.slice(-40)}  |  space`;
+      }
+      lastSilenceStart = 0;
+    }
+  }
+  requestAnimationFrame(detectBeeps);
+}
+
+// Locations system
+let myLocation = null;
+let myLocMarker = null;
+let customLocs = [];
+let selectedMarker = null;
+
+function gridToXY(grid) {
+  if (!grid || grid.length !== 6) return null;
+  const x = parseInt(grid.slice(0, 3)) * 100;
+  const y = parseInt(grid.slice(3)) * 100;
+  return { x, y };
+}
+
+function calcHeading(from, to) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  let deg = Math.atan2(dx, dy) * (180 / Math.PI);
+  if (deg < 0) deg += 360;
+  return Math.round(deg);
+}
+
+document.getElementById('setMyLoc').addEventListener('click', () => {
+  const grid = document.getElementById('myLocInput').value.trim();
+  const pos = gridToXY(grid);
+  if (!pos) {
+    document.getElementById('myLocStatus').textContent = 'Enter a valid 6-digit grid';
+    return;
+  }
+  myLocation = { grid, ...pos };
+  document.getElementById('myLocStatus').textContent = `My Location set: ${grid}`;
+  if (myLocMarker) map.removeLayer(myLocMarker);
+  myLocMarker = L.marker([pos.y, pos.x], {
+    icon: L.divIcon({
+      className: 'custom-marker',
+      html: `<div style="background:#3fb950;color:white;padding:4px 6px;border-radius:4px;font-size:11px;font-weight:bold">My Location</div>`,
+      iconSize: [80, 22],
+      iconAnchor: [40, 11]
+    }),
+    interactive: false
+  }).addTo(map);
+  map.setView([pos.y, pos.x], 1);
+});
+
+document.getElementById('addLoc').addEventListener('click', () => {
+  const title = document.getElementById('locTitle').value.trim() || 'Pin';
+  const grid = document.getElementById('locGrid').value.trim();
+  const pos = gridToXY(grid);
+  if (!pos) return;
+  const id = Date.now();
+  const marker = L.marker([pos.y, pos.x], {
+    icon: L.divIcon({
+      className: 'custom-marker',
+      html: `<div style="background:#d29922;color:white;padding:3px 5px;border-radius:4px;font-size:10px;font-weight:bold">${title}</div>`,
+      iconSize: [60, 18],
+      iconAnchor: [30, 9]
+    })
+  }).addTo(map);
+  marker.on('click', () => {
+    if (!myLocation) {
+      document.getElementById('headingValue').textContent = 'Set My Location first';
+      return;
+    }
+    const heading = calcHeading(myLocation, pos);
+    document.getElementById('headingValue').textContent = heading + '°';
+    if (selectedMarker) selectedMarker.setIcon(selectedMarker._originalIcon || marker.getIcon());
+    selectedMarker = marker;
+  });
+  customLocs.push({ id, title, grid, pos, marker });
+  renderCustomLocs();
+  document.getElementById('locTitle').value = '';
+  document.getElementById('locGrid').value = '';
+});
+
+function renderCustomLocs() {
+  const el = document.getElementById('customLocations');
+  el.innerHTML = customLocs.map(l => `
+    <div class="bunker-item">
+      <strong>${l.title}</strong> · ${l.grid}<br>
+      <small>Coords: ${l.pos.x}, ${l.pos.y}</small>
+    </div>
+  `).join('');
+}
+
+// Init
+initMap();
+renderAllBunkers();
+
+// Register service worker for PWA
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>
