@@ -223,7 +223,7 @@ function initMap() {
     zoomDelta: 0.5
   });
   const bounds = [[0,0], [16380, 16380]];
-  L.imageOverlay('nasdara-map.JPG', bounds).addTo(map);
+  L.imageOverlay('https://raw.githubusercontent.com/SterlingArcher94/nasdaraLoc/main/nasdara-map.JPG', bounds).addTo(map);
   map.fitBounds(bounds, { padding: [10, 10] });
   map.setMaxBounds(bounds);
 
@@ -233,7 +233,7 @@ function initMap() {
 
   // Bunkers (blue by default)
   BUNKERS.forEach(b => {
-    const marker = L.marker([b.y, b.x], {
+    const marker = L.marker([16380 - b.y, b.x], {
       icon: L.divIcon({
         className: 'custom-marker',
         html: `<div style="background:#58a6ff;color:white;padding:3px 5px;border-radius:4px;font-size:10px;font-weight:bold;white-space:nowrap">${b.code}</div>`,
@@ -257,7 +257,7 @@ function initMap() {
   // Loot / POI dots
   LOOT_POIS.forEach(p => {
     const color = p.type === 'military' ? '#f85149' : p.type === 'water' ? '#58a6ff' : '#d29922';
-    const marker = L.circleMarker([p.y, p.x], {
+    const marker = L.circleMarker([16380 - p.y, p.x], {
       radius: 6,
       color: color,
       fillColor: color,
@@ -273,7 +273,7 @@ function initMap() {
 
   // Roads
   ROADS.forEach(r => {
-    const latlngs = r.points.map(pt => [pt[1], pt[0]]);
+    const latlngs = r.points.map(pt => [16380 - pt[1], pt[0]]);
     L.polyline(latlngs, {color: '#8b949e', weight: 2, opacity: 0.7}).bindPopup(r.name).addTo(roadLayer);
   });
 
@@ -363,7 +363,7 @@ function addMarker(bunker, pin) {
   const existing = markers.find(m => m.bunkerId === bunker.id);
   if (existing) bunkerLayer.removeLayer(existing.marker);
 
-  const marker = L.marker([bunker.y, bunker.x], {
+  const marker = L.marker([16380 - bunker.y, bunker.x], {
     icon: L.divIcon({
       className: 'custom-marker',
       html: `<div style="background:#f85149;color:white;padding:4px 6px;border-radius:4px;font-size:11px;font-weight:bold;white-space:nowrap;text-align:center;line-height:1.2">${bunker.code}<br>${pin}</div>`,
@@ -375,7 +375,7 @@ function addMarker(bunker, pin) {
   bunkerLayer.addLayer(marker);
   markers = markers.filter(m => m.bunkerId !== bunker.id);
   markers.push({bunkerId: bunker.id, marker});
-  map.setView([bunker.y, bunker.x], 1);
+  map.setView([16380 - bunker.y, bunker.x], 1);
 }
 
 // Manual decode
@@ -507,7 +507,7 @@ document.getElementById('setMyLoc').addEventListener('click', () => {
   myLocation = { grid, ...pos };
   document.getElementById('myLocStatus').textContent = `My Location set: ${grid}`;
   if (myLocMarker) map.removeLayer(myLocMarker);
-  myLocMarker = L.marker([pos.y, pos.x], {
+  myLocMarker = L.marker([16380 - pos.y, pos.x], {
     icon: L.divIcon({
       className: 'custom-marker',
       html: `<div style="background:#3fb950;color:white;padding:4px 6px;border-radius:4px;font-size:11px;font-weight:bold">My Location</div>`,
@@ -516,7 +516,7 @@ document.getElementById('setMyLoc').addEventListener('click', () => {
     }),
     interactive: false
   }).addTo(map);
-  map.setView([pos.y, pos.x], 1);
+  map.setView([16380 - pos.y, pos.x], 1);
 });
 
 document.getElementById('addLoc').addEventListener('click', () => {
@@ -525,7 +525,7 @@ document.getElementById('addLoc').addEventListener('click', () => {
   const pos = gridToXY(grid);
   if (!pos) return;
   const id = Date.now();
-  const marker = L.marker([pos.y, pos.x], {
+  const marker = L.marker([16380 - pos.y, pos.x], {
     icon: L.divIcon({
       className: 'custom-marker',
       html: `<div style="background:#d29922;color:white;padding:3px 5px;border-radius:4px;font-size:10px;font-weight:bold">${title}</div>`,
